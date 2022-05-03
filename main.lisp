@@ -16,8 +16,6 @@
                (make-list (- block-size offset 1) :initial-element
                           (make-list block-size :initial-element 0))))
 
-(defun range (from to) (when (<= from to) (cons from (range (1+ from) to))))
-
 (defun offset-increase-horizontal (block-size from to)
   (concatenate 'list
                (make-list from :initial-element
@@ -141,6 +139,36 @@
         ((evenp delay)
          (delay-wire-horizontal-multi-symmetric block-size offset 1 delay))
         (t (delay-wire-horizontal-fine block-size offset delay))))
+
+(defun clock-horizontal (block-size offset clock)
+  (let* ((remainder (mod clock 2))
+         (half (/ (- clock remainder) 2))
+         (undelayed
+          (concatenate 'list
+                       (make-list offset :initial-element
+                                  (make-list block-size :initial-element 0))
+                       (list
+                        (concatenate 'list
+                                     (make-list (- block-size half)
+                                                :initial-element 0)
+                                     (make-list (- half 2) :initial-element 3)
+                                     '(2 1)))
+                       (list
+                        (concatenate 'list
+                                     (make-list (- block-size half 1)
+                                                :initial-element 0)
+                                     '(3)
+                                     (make-list (- half 1) :initial-element 0)
+                                     '(1)))
+                       (list
+                        (concatenate 'list
+                                     (make-list (- block-size half)
+                                                :initial-element 0)
+                                     (make-list (- half 1) :initial-element 3)
+                                     '(0)))
+                       (make-list (- block-size offset 3) :initial-element
+                                  (make-list block-size :initial-element 0)))))
+    undelayed))
 
 (defun duplicating-wire-horizontal
        (block-size offset &optional (duplication-offset 5))
@@ -503,15 +531,12 @@
          (flatten-grid
           (list
            (list
-            (crop-south (* 2 *block-size*)
-             (crop-east (* 5 *block-size*)
-              (transpose
-               (max-grid
-                (data-start-wire-horizontal (* 8 *block-size*) 1 17
-                 '(t nil t nil t nil t nil))
-                (data-start-wire-horizontal (* 8 *block-size*)
-                 (+ *block-size* 1) 17 '(t t nil nil t t nil nil))
-                (data-start-wire-horizontal (* 8 *block-size*)
-                 (+ (* *block-size* 2) 1) 17 '(t t t t nil nil nil nil)))))))
+            (crop-east *block-size*
+             (transpose
+              (max-grid (clock-horizontal (* *block-size* 4) 1 (* 17 2))
+               (clock-horizontal (* *block-size* 4) (+ *block-size* 1)
+                (* 17 3))
+               (clock-horizontal (* *block-size* 4) (+ (* *block-size* 2) 1)
+                (* 17 5))))))
            (list (full-adder-vertical-period-17 *block-size*))))))
 
