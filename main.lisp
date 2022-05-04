@@ -1,4 +1,4 @@
-; Description: Assemble patterns for the Wireworld cellular automaton
+; Description: Assemble patterns and rules for cellular automata
 ; Author: Isidor Zeuner
 ; compsys@quidecco.de
 ; For license see: https://mit-license.org
@@ -139,36 +139,6 @@
         ((evenp delay)
          (delay-wire-horizontal-multi-symmetric block-size offset 1 delay))
         (t (delay-wire-horizontal-fine block-size offset delay))))
-
-(defun clock-horizontal (block-size offset clock)
-  (let* ((remainder (mod clock 2))
-         (half (/ (- clock remainder) 2))
-         (undelayed
-          (concatenate 'list
-                       (make-list offset :initial-element
-                                  (make-list block-size :initial-element 0))
-                       (list
-                        (concatenate 'list
-                                     (make-list (- block-size half)
-                                                :initial-element 0)
-                                     (make-list (- half 2) :initial-element 3)
-                                     '(2 1)))
-                       (list
-                        (concatenate 'list
-                                     (make-list (- block-size half 1)
-                                                :initial-element 0)
-                                     '(3)
-                                     (make-list (- half 1) :initial-element 0)
-                                     '(1)))
-                       (list
-                        (concatenate 'list
-                                     (make-list (- block-size half)
-                                                :initial-element 0)
-                                     (make-list (- half 1) :initial-element 3)
-                                     '(0)))
-                       (make-list (- block-size offset 3) :initial-element
-                                  (make-list block-size :initial-element 0)))))
-    undelayed))
 
 (defun duplicating-wire-horizontal
        (block-size offset &optional (duplication-offset 5))
@@ -368,6 +338,52 @@
        (blanked replacement))
       grid))))
 
+(defun clock-horizontal (block-size offset clock)
+  (let* ((remainder (mod clock 2))
+         (half (/ (- clock remainder) 2))
+         (undelayed
+          (concatenate 'list
+                       (make-list offset :initial-element
+                                  (make-list block-size :initial-element 0))
+                       (list
+                        (concatenate 'list
+                                     (make-list (- block-size half)
+                                                :initial-element 0)
+                                     (make-list (- half 2) :initial-element 3)
+                                     '(2 1)))
+                       (list
+                        (concatenate 'list
+                                     (make-list (- block-size half 1)
+                                                :initial-element 0)
+                                     '(3)
+                                     (make-list (- half 1) :initial-element 0)
+                                     '(1)))
+                       (list
+                        (concatenate 'list
+                                     (make-list (- block-size half)
+                                                :initial-element 0)
+                                     (make-list (- half 1) :initial-element 3)
+                                     '(0)))
+                       (make-list (- block-size offset 3) :initial-element
+                                  (make-list block-size :initial-element 0))))
+         (delay
+          (reverse
+           (transpose
+            (reverse
+             (transpose
+              (delay-wire-horizontal block-size (- block-size offset 1)
+               remainder)))))))
+    (transpose
+     (reverse
+      (replace-into (reverse (transpose undelayed))
+       (trim-east
+        (reverse
+         (transpose
+          (crop-west
+           (- block-size -3 (length (transpose (trim-west undelayed))))
+           delay))))
+       2 0)))))
+
 (defvar *and-raw*
   (trim-all
    (read-rle
@@ -482,23 +498,23 @@
          (list (transpose (delay-wire-horizontal block-size 1 delay))
                (transpose (delay-wire-horizontal block-size 4 (+ delay 3)))))))
 
-(defun full-adder-vertical-period-17 (block-size)
+(defun full-adder-vertical-period-17 (block-size x y cin)
   (flatten-grid
    (list
     (mapcar #'(lambda (block) (crop-south block-size block))
             (list
              (transpose
-              (max-grid (offset-decrease-horizontal (* block-size 2) 1 0)
-               (offset-decrease-horizontal (* block-size 2) (+ block-size 1)
+              (max-grid (offset-decrease-horizontal (* block-size 2) x 0)
+               (offset-decrease-horizontal (* block-size 2) (+ block-size y)
                 8)))
              (apply #'concatenate 'list
                     (make-list 2 :initial-element
-                               (transpose (wire-horizontal block-size 1))))))
+                               (transpose (wire-horizontal block-size cin))))))
     (list (half-adder-vertical-period-17 block-size 0 8)
           (apply #'concatenate 'list
-                 (transpose (delay-wire-horizontal block-size 1 28))
+                 (transpose (delay-wire-horizontal block-size cin 28))
                  (make-list 4 :initial-element
-                            (transpose (wire-horizontal block-size 1)))))
+                            (transpose (wire-horizontal block-size cin)))))
     (mapcar #'(lambda (block) (crop-south block-size block))
             (list
              (apply #'concatenate 'list
@@ -506,7 +522,7 @@
                                (transpose (wire-horizontal block-size 1))))
              (transpose
               (max-grid (offset-decrease-horizontal (* block-size 2) 4 0)
-               (offset-decrease-horizontal (* block-size 2) (+ block-size 1)
+               (offset-decrease-horizontal (* block-size 2) (+ block-size cin)
                 8)))))
     (list
      (apply #'concatenate 'list
@@ -533,10 +549,10 @@
            (list
             (crop-east *block-size*
              (transpose
-              (max-grid (clock-horizontal (* *block-size* 4) 1 (* 17 2))
-               (clock-horizontal (* *block-size* 4) (+ *block-size* 1)
+              (max-grid (clock-horizontal (* *block-size* 4) 5 (* 17 2))
+               (clock-horizontal (* *block-size* 4) (+ *block-size* 5)
                 (* 17 3))
-               (clock-horizontal (* *block-size* 4) (+ (* *block-size* 2) 1)
+               (clock-horizontal (* *block-size* 4) (+ (* *block-size* 2) 5)
                 (* 17 5))))))
-           (list (full-adder-vertical-period-17 *block-size*))))))
+           (list (full-adder-vertical-period-17 *block-size* 5 5 5))))))
 
