@@ -8,94 +8,175 @@
   (make-list block-size :initial-element
              (make-list block-size :initial-element 0)))
 
-(defun wire-horizontal (block-size offset)
+(defmacro stream-cons (head tail) `(cons ,head #'(lambda () ,tail)))
+
+(defun stream-car (stream) (car stream))
+
+(defun stream-cdr (stream) (funcall (cdr stream)))
+
+(defun stream-elt (stream l)
+  (if (eql 0 l)
+      (stream-car stream)
+      (stream-elt (stream-cdr stream) (1- l))))
+
+(defun constant-stream (constant)
+  (stream-cons constant (constant-stream constant)))
+
+(defun cell-apply-time-stream (cell time-stream)
+  (if (eql 0 cell)
+      cell
+      (stream-elt time-stream (1- cell))))
+
+(defun row-apply-time-stream (row time-stream)
+  (mapcar #'(lambda (cell) (cell-apply-time-stream cell time-stream)) row))
+
+(defun grid-apply-time-stream (grid time-stream)
+  (mapcar #'(lambda (row) (row-apply-time-stream row time-stream)) grid))
+
+(defun cell-timings-flip (cell maximum)
+  (if (eql 0 cell)
+      cell
+      (- (1+ maximum) cell)))
+
+(defun row-timings-flip (row maximum)
+  (mapcar #'(lambda (cell) (cell-timings-flip cell maximum)) row))
+
+(defun grid-timings-flip (grid maximum)
+  (mapcar #'(lambda (row) (row-timings-flip row maximum)) grid))
+
+(defun timings-wire-horizontal (block-size offset)
   (concatenate 'list
                (make-list offset :initial-element
                           (make-list block-size :initial-element 0))
-               (list (make-list block-size :initial-element 3))
+               (list (reverse (range 1 block-size)))
                (make-list (- block-size offset 1) :initial-element
                           (make-list block-size :initial-element 0))))
 
-(defun offset-increase-horizontal (block-size from to)
+(defun wire-horizontal (block-size offset)
+  (grid-apply-time-stream (timings-wire-horizontal block-size offset)
+   (constant-stream 3)))
+
+(defun timings-offset-increase-horizontal (block-size from to)
   (concatenate 'list
                (make-list from :initial-element
                           (make-list block-size :initial-element 0))
                (mapcar
                 #'(lambda (offset)
-                    (concatenate 'list
-                                 (make-list (- offset from) :initial-element 0)
-                                 '(3)
-                                 (make-list (- block-size (- offset from) 1)
-                                            :initial-element 0)))
+                    (nconc (make-list (- offset from) :initial-element 0)
+                           (list (- block-size (- offset from)))
+                           (make-list (- block-size (- offset from) 1)
+                                      :initial-element 0)))
                 (range from (1- to)))
                (list
                 (concatenate 'list (make-list (- to from) :initial-element 0)
-                             (make-list (- block-size (- to from))
-                                        :initial-element 3)))
+                             (reverse (range 1 (- block-size (- to from))))))
                (make-list (- block-size to 1) :initial-element
                           (make-list block-size :initial-element 0))))
 
-(defun offset-decrease-horizontal (block-size from to)
+(defun timings-offset-decrease-horizontal (block-size from to)
   (reverse
-   (offset-increase-horizontal block-size (- block-size from 1)
+   (timings-offset-increase-horizontal block-size (- block-size from 1)
     (- block-size to 1))))
 
-(defun rpad (required padding raw)
-  (concatenate 'list raw
-               (make-list (- required (length raw)) :initial-element padding)))
+(defun offset-increase-horizontal (block-size from to)
+  (grid-apply-time-stream
+   (timings-offset-increase-horizontal block-size from to) (constant-stream 3)))
 
-(defun data-start-wire-horizontal (block-size offset period data)
-  (let ((coded
-         (mapcan
+(defun offset-decrease-horizontal (block-size from to)
+  (grid-apply-time-stream
+   (timings-offset-decrease-horizontal block-size from to) (constant-stream 3)))
+
+(defun concat-list-stream (earlier later)
+  (if earlier
+      (stream-cons (car earlier) (concat-list-stream (cdr earlier) later))
+      later))
+
+(defun concat-lists-stream (earlier later)
+  (if earlier
+      (concat-list-stream (car earlier)
+       (concat-lists-stream (cdr earlier) later))
+      later))
+
+(defun stream-skip (skipped start)
+  (if (eql 0 start)
+      skipped
+      (stream-skip (stream-cdr skipped) (1- start))))
+
+(defun stream-sublist (whole from to)
+  (unless (eql 0 to)
+    (if (eql 0 from)
+        (cons (stream-car whole)
+              (stream-sublist (stream-cdr whole) from (1- to)))
+        (stream-sublist (stream-cdr whole) (1- from) (1- to)))))
+
+(defun data-signal-stream (period data &optional (start-delay 0))
+  (concat-lists-stream
+   (cons (make-list start-delay :initial-element 3)
+         (mapcar
           #'(lambda (is-set)
               (if is-set
                   (list* 1 2 (make-list (- period 2) :initial-element 3))
                   (make-list period :initial-element 3)))
-          data)))
-    (concatenate 'list
-                 (make-list offset :initial-element
-                            (make-list block-size :initial-element 0))
-                 (list
-                  (rpad block-size 3 (subseq (reverse coded) (1- period))))
-                 (make-list (- block-size offset 1) :initial-element
-                            (make-list block-size :initial-element 0)))))
+          data))
+   (constant-stream 3)))
+
+(defun data-start-wire-horizontal
+       (block-size offset period data &optional (start-delay 0))
+  (let ((coded (data-signal-stream period data start-delay)))
+    (grid-apply-time-stream (timings-wire-horizontal block-size offset) coded)))
 
 (defun start-wire-horizontal (block-size offset)
   (data-start-wire-horizontal block-size offset 4 '(t)))
 
-(defun delay-wire-horizontal-multi-symmetric (block-size offset detours delay)
+(defun timings-delay-wire-horizontal-multi-symmetric
+       (block-size offset detours delay)
   (let ((vertical (1+ (/ delay detours 2))))
     (concatenate 'list
                  (make-list offset :initial-element
                             (make-list block-size :initial-element 0))
                  (list
                   (nconc
-                   (apply #'concatenate 'list
-                          (make-list detours :initial-element
-                                     (concatenate 'list '(3)
-                                                  (make-list 3 :initial-element
-                                                             0))))
-                   (make-list (- block-size (* 4 detours)) :initial-element
-                              3)))
-                 (make-list vertical :initial-element
-                            (concatenate 'list
-                                         (apply #'concatenate 'list
-                                                (make-list (* 2 detours)
-                                                           :initial-element
-                                                           '(0 3)))
-                                         (make-list
-                                          (- block-size (* 4 detours))
-                                          :initial-element 0)))
+                   (mapcan
+                    #'(lambda (detour)
+                        (list
+                         (+ (- block-size (* 4 detours))
+                            (* 2 (1+ vertical) detour))
+                         0 0 0))
+                    (reverse (range 1 detours)))
+                   (reverse (range 1 (- block-size (* 4 detours))))))
+                 (mapcar
+                  #'(lambda (distance)
+                      (nconc
+                       (mapcan
+                        #'(lambda (detour)
+                            (list 0
+                                  (-
+                                   (+ (- block-size (* 4 detours))
+                                      (* 2 (1+ vertical) detour))
+                                   distance)
+                                  0
+                                  (+ (- block-size (* 4 detours))
+                                     (* 2 (1+ vertical) (1- detour))
+                                     distance)))
+                        (reverse (range 1 detours)))
+                       (make-list (- block-size (* 4 detours)) :initial-element
+                                  0)))
+                  (range 1 vertical))
                  (list
                   (nconc
-                   (apply #'concatenate 'list
-                          (make-list detours :initial-element '(0 0 3 0)))
+                   (mapcan
+                    #'(lambda (detour)
+                        (list 0 0
+                              (+ (- block-size (* 4 detours) (1+ vertical))
+                                 (* 2 (1+ vertical) detour))
+                              0))
+                    (reverse (range 1 detours)))
                    (make-list (- block-size (* 4 detours)) :initial-element
                               0)))
                  (make-list (- block-size vertical offset 2) :initial-element
                             (make-list block-size :initial-element 0)))))
 
-(defun delay-wire-horizontal-fine (block-size offset delay)
+(defun timings-delay-wire-horizontal-fine (block-size offset delay)
   (let* ((vertical-length (1+ delay))
          (diagonal-length (+ 2 vertical-length))
          (regular-start (1+ diagonal-length)))
@@ -103,42 +184,53 @@
                  (make-list offset :initial-element
                             (make-list block-size :initial-element 0))
                  (list
-                  (concatenate 'list '(3)
+                  (concatenate 'list (list (+ block-size delay))
                                (make-list (1- regular-start) :initial-element
                                           0)
-                               (make-list (- block-size regular-start)
-                                          :initial-element 3)))
+                               (reverse
+                                (range 1 (- block-size regular-start)))))
                  (mapcar
                   #'(lambda (vertical-offset)
-                      (concatenate 'list
-                                   (make-list vertical-offset :initial-element
-                                              0)
-                                   '(3)
-                                   (make-list
-                                    (- diagonal-length vertical-offset 1)
-                                    :initial-element 0)
-                                   '(3)
-                                   (make-list (- block-size diagonal-length 1)
-                                              :initial-element 0)))
+                      (nconc (make-list vertical-offset :initial-element 0)
+                             (list (- (+ block-size delay) vertical-offset))
+                             (make-list (- diagonal-length vertical-offset 1)
+                                        :initial-element 0)
+                             (list
+                              (+ (- block-size regular-start) vertical-offset))
+                             (make-list (- block-size diagonal-length 1)
+                                        :initial-element 0)))
                   (range 1 vertical-length))
                  (list
                   (concatenate 'list
                                (make-list (1- diagonal-length) :initial-element
                                           0)
-                               '(3)
+                               (list
+                                (- (+ block-size delay) vertical-length 1))
                                (make-list (- block-size diagonal-length)
                                           :initial-element 0)))
                  (make-list (- block-size offset diagonal-length)
                             :initial-element
                             (make-list block-size :initial-element 0)))))
 
-(defun delay-wire-horizontal (block-size offset delay)
-  (cond ((eql 0 delay) (wire-horizontal block-size offset))
+(defun timings-delay-wire-horizontal (block-size offset delay)
+  (cond ((eql 0 delay) (timings-wire-horizontal block-size offset))
         ((eql 0 (mod delay 4))
-         (delay-wire-horizontal-multi-symmetric block-size offset 2 delay))
+         (timings-delay-wire-horizontal-multi-symmetric block-size offset 2
+          delay))
         ((evenp delay)
-         (delay-wire-horizontal-multi-symmetric block-size offset 1 delay))
-        (t (delay-wire-horizontal-fine block-size offset delay))))
+         (timings-delay-wire-horizontal-multi-symmetric block-size offset 1
+          delay))
+        (t (timings-delay-wire-horizontal-fine block-size offset delay))))
+
+(defun delay-wire-horizontal-multi-symmetric (block-size offset detours delay)
+  (grid-apply-time-stream
+   (timings-delay-wire-horizontal-multi-symmetric block-size offset detours
+    delay)
+   (constant-stream 3)))
+
+(defun delay-wire-horizontal (block-size offset delay)
+  (grid-apply-time-stream
+   (timings-delay-wire-horizontal block-size offset delay) (constant-stream 3)))
 
 (defun duplicating-wire-horizontal
        (block-size offset &optional (duplication-offset 5))
@@ -161,9 +253,6 @@
                                         :initial-element 3)))
                (make-list (- block-size offset 1) :initial-element
                           (make-list block-size :initial-element 0))))
-
-(defun transpose (grid)
-  (when (car grid) (cons (mapcar #'car grid) (transpose (mapcar #'cdr grid)))))
 
 (defun flatten-row (nested)
   (when (car nested)
@@ -190,140 +279,13 @@
 
 (defun cold-grid (grid) (mapcar #'cold-row grid))
 
-(defvar *states* '("." "A" "B" "C"))
-
-(defun write-rle-state (state) (elt *states* state))
-
-(defun write-rle-row (row)
-  (if row
-      (let* ((state (car row))
-             (repetitions
-              (or (position-if-not #'(lambda (other) (eql state other)) row)
-                  (length row))))
-        (concatenate 'string
-                     (if (eql repetitions 1)
-                         ""
-                         (format nil "~d" repetitions))
-                     (write-rle-state state)
-                     (write-rle-row (subseq row repetitions))))
-      "$
-"))
-
-(defun write-rle (grid)
-  (concatenate 'string "x = " (format nil "~d" (length (car grid))) ", y = "
-               (format nil "~d" (length grid)) ", rule = WireWorld
-"
-               (apply #'concatenate 'string (mapcar #'write-rle-row grid)) "!
-"))
-
-(defun split-by (delimiter to-split)
-  (let ((found (position delimiter to-split)))
-    (if found
-        (cons (subseq to-split 0 found)
-              (split-by delimiter (subseq to-split (1+ found))))
-        (list to-split))))
-
-(defun read-rle-line-or-more (line-or-more)
-  (multiple-value-bind (repetitions next)
-      (parse-integer line-or-more :junk-allowed t)
-    (let ((repetitions (or repetitions 1))
-          (unparsed (subseq line-or-more next)))
-      (if (equal "" unparsed)
-          (make-list repetitions)
-          (let ((state (position (subseq unparsed 0 1) *states* :test #'equal))
-                (tail (read-rle-line-or-more (subseq unparsed 1))))
-            (cons
-             (concatenate 'list (make-list repetitions :initial-element state)
-                          (car tail))
-             (cdr tail)))))))
-
-(defun read-rle (rle)
-  (let* ((varying-length
-          (mapcan #'read-rle-line-or-more
-                  (split-by #\$ (car (split-by #\! rle)))))
-         (max-length (apply #'max (mapcar #'length varying-length))))
-    (mapcar #'(lambda (line) (rpad max-length 0 line)) varying-length)))
-
-(defun trim-north (grid)
-  (when grid
-    (if (not (remove 0 (car grid)))
-        (trim-north (cdr grid))
-        grid)))
-
-(defun apply-west (to-north grid)
-  (transpose (funcall to-north (transpose grid))))
-
-(defun apply-south (to-north grid) (reverse (funcall to-north (reverse grid))))
-
-(defun apply-east (to-north grid)
-  (transpose (apply-south to-north (transpose grid))))
-
-(defun trim-west (grid) (apply-west #'trim-north grid))
-
-(defun trim-south (grid) (apply-south #'trim-north grid))
-
-(defun trim-east (grid) (apply-east #'trim-north grid))
-
-(defun trim-all (grid) (trim-north (trim-east (trim-south (trim-west grid)))))
-
-(defun add-north (width state grid)
-  (concatenate 'list
-               (make-list width :initial-element
-                          (make-list (length (car grid)) :initial-element
-                                     state))
-               grid))
-
-(defun add-west (width state grid)
-  (apply-west #'(lambda (grid) (add-north width state grid)) grid))
-
-(defun add-south (width state grid)
-  (apply-south #'(lambda (grid) (add-north width state grid)) grid))
-
-(defun add-east (width state grid)
-  (apply-east #'(lambda (grid) (add-north width state grid)) grid))
-
-(defun add-around (north east south west state grid)
-  (add-north north state
-   (add-east east state (add-south south state (add-west west state grid)))))
-
-(defun draw-north (drawn reversed grid)
-  (concatenate 'list
-               (list
-                (funcall
-                 (if reversed
-                     #'reverse
-                     #'identity)
-                 (concatenate 'list drawn
-                              (make-list (- (length (car grid)) (length drawn))
-                                         :initial-element 0))))
-               grid))
-
-(defun draw-east (drawn reversed grid)
-  (apply-east #'(lambda (grid) (draw-north drawn reversed grid)) grid))
-
-(defun draw-south (drawn reversed grid)
-  (apply-south #'(lambda (grid) (draw-north drawn reversed grid)) grid))
-
-(defun draw-west (drawn reversed grid)
-  (apply-west #'(lambda (grid) (draw-north drawn reversed grid)) grid))
-
-(defun crop-north (width grid) (subseq grid width))
-
-(defun crop-west (width grid)
-  (apply-west #'(lambda (grid) (crop-north width grid)) grid))
-
-(defun crop-south (width grid)
-  (apply-south #'(lambda (grid) (crop-north width grid)) grid))
-
-(defun crop-east (width grid)
-  (apply-east #'(lambda (grid) (crop-north width grid)) grid))
-
 (defun blanked (grid)
   (make-list (length grid) :initial-element
              (make-list (length (car grid)) :initial-element 0)))
 
 (defun replace-into
-       (grid replacement &optional (offset-row 0) (offset-column 0))
+       (grid replacement
+        &optional (offset-row 0) (offset-column 0) (max-state 3))
   (let* ((rows-grid (length grid))
          (columns-grid (length (car grid)))
          (rows-replacement (length replacement))
@@ -334,11 +296,11 @@
      (add-around offset-row appended-columns appended-rows offset-column 0
       replacement)
      (min-grid
-      (add-around offset-row appended-columns appended-rows offset-column 3
-       (blanked replacement))
+      (add-around offset-row appended-columns appended-rows offset-column
+       max-state (blanked replacement))
       grid))))
 
-(defun clock-horizontal (block-size offset clock)
+(defun timings-clock-horizontal (block-size offset clock)
   (let* ((remainder (mod clock 2))
          (half (/ (- clock remainder) 2))
          (undelayed
@@ -346,24 +308,21 @@
                        (make-list offset :initial-element
                                   (make-list block-size :initial-element 0))
                        (list
-                        (concatenate 'list
-                                     (make-list (- block-size half)
-                                                :initial-element 0)
-                                     (make-list (- half 2) :initial-element 3)
-                                     '(2 1)))
+                        (nconc
+                         (make-list (- block-size half) :initial-element 0)
+                         (reverse (range 1 half))))
                        (list
                         (concatenate 'list
                                      (make-list (- block-size half 1)
                                                 :initial-element 0)
-                                     '(3)
+                                     (list (+ half remainder 1))
                                      (make-list (- half 1) :initial-element 0)
                                      '(1)))
                        (list
                         (concatenate 'list
                                      (make-list (- block-size half)
                                                 :initial-element 0)
-                                     (make-list (- half 1) :initial-element 3)
-                                     '(0)))
+                                     (range (+ half remainder 2) clock) '(0)))
                        (make-list (- block-size offset 3) :initial-element
                                   (make-list block-size :initial-element 0))))
          (delay
@@ -371,8 +330,10 @@
            (transpose
             (reverse
              (transpose
-              (delay-wire-horizontal block-size (- block-size offset 1)
-               remainder)))))))
+              (grid-timings-flip
+               (timings-delay-wire-horizontal block-size
+                (- block-size offset 1) remainder)
+               (+ block-size 2 remainder))))))))
     (transpose
      (reverse
       (replace-into (reverse (transpose undelayed))
@@ -382,7 +343,13 @@
           (crop-west
            (- block-size -3 (length (transpose (trim-west undelayed))))
            delay))))
-       2 0)))))
+       2 0 clock)))))
+
+(defun clock-horizontal
+       (block-size offset clock
+        &optional (period clock) (data '(t)) (start-delay 0))
+  (grid-apply-time-stream (timings-clock-horizontal block-size offset clock)
+   (data-signal-stream period data start-delay)))
 
 (defvar *and-raw*
   (trim-all
@@ -549,10 +516,12 @@
            (list
             (crop-east *block-size*
              (transpose
-              (max-grid (clock-horizontal (* *block-size* 4) 5 (* 17 2))
+              (max-grid
+               (clock-horizontal (* *block-size* 4) 5 (1+ (* 17 8)) 17
+                '(t nil t nil t nil t nil))
                (clock-horizontal (* *block-size* 4) (+ *block-size* 5)
-                (* 17 3))
+                (1+ (* 17 8)) 17 '(t t nil nil t t nil nil))
                (clock-horizontal (* *block-size* 4) (+ (* *block-size* 2) 5)
-                (* 17 5))))))
+                (1+ (* 17 8)) 17 '(t t t t nil nil nil nil))))))
            (list (full-adder-vertical-period-17 *block-size* 5 5 5))))))
 
