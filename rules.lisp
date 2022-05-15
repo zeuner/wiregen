@@ -248,6 +248,249 @@
                           (cadr coordinates))))))
               (two-faction-life-rule neighbourhood))))))
 
+(defvar *states-rotation*
+  (cartesian '(border off on)
+   '(nil start-north start-east start-south start-west stop-north stop-east
+     stop-south stop-west center)))
+
+(defun cell-registers-to-state (states registers)
+  (position registers states :test #'equal))
+
+(defun row-registers-to-states (states row)
+  (mapcar #'(lambda (cell) (cell-registers-to-state states cell)) row))
+
+(defun grid-registers-to-states (states grid)
+  (mapcar #'(lambda (row) (row-registers-to-states states row)) grid))
+
+(defun cell-state-to-registers (states state) (elt states state))
+
+(defun row-states-to-registers (states row)
+  (mapcar #'(lambda (cell) (cell-state-to-registers states cell)) row))
+
+(defun grid-states-to-registers (states grid)
+  (mapcar #'(lambda (row) (row-states-to-registers states row)) grid))
+
+(defun cell-register (n registers) (elt registers n))
+
+(defun row-register (n row)
+  (mapcar #'(lambda (cell) (cell-register n cell)) row))
+
+(defun grid-register (n grid)
+  (mapcar #'(lambda (row) (row-register n row)) grid))
+
+(defun positions-if (condition data &optional (offset 0))
+  (when data
+    (let ((rest (positions-if condition (cdr data) (1+ offset))))
+      (if (funcall condition (car data))
+          (cons offset rest)
+          rest))))
+
+(defvar *moore-north*
+  (positions-if #'(lambda (offsets) (< (car offsets) 0)) *moore*))
+
+(defvar *moore-east*
+  (positions-if #'(lambda (offsets) (< 0 (cadr offsets))) *moore*))
+
+(defvar *moore-south*
+  (positions-if #'(lambda (offsets) (< 0 (car offsets))) *moore*))
+
+(defvar *moore-west*
+  (positions-if #'(lambda (offsets) (< (cadr offsets) 0)) *moore*))
+
+(defun rotation-rule (neighbourhood)
+  (let* ((registers (row-states-to-registers *states-rotation* neighbourhood))
+         (data (row-register 0 registers))
+         (signals (row-register 1 registers))
+         (border-north
+          (every #'(lambda (position) (eq 'border (elt data position)))
+                 *moore-north*))
+         (border-east
+          (every #'(lambda (position) (eq 'border (elt data position)))
+                 *moore-east*))
+         (border-south
+          (every #'(lambda (position) (eq 'border (elt data position)))
+                 *moore-south*))
+         (border-west
+          (every #'(lambda (position) (eq 'border (elt data position)))
+                 *moore-west*))
+         (propagate-north
+          (every
+           #'(lambda (position)
+               (member (elt signals position) '(start-north start-east)))
+           *moore-north*))
+         (propagate-east
+          (every
+           #'(lambda (position)
+               (member (elt signals position) '(start-east start-south)))
+           *moore-east*))
+         (propagate-south
+          (every
+           #'(lambda (position)
+               (member (elt signals position) '(start-south start-west)))
+           *moore-south*))
+         (propagate-west
+          (every
+           #'(lambda (position)
+               (member (elt signals position) '(start-west start-north)))
+           *moore-west*))
+         (next-signal
+          (cond ((eq 'border (car data)) (car signals))
+                ((and (member 'start-north signals)
+                      (member 'start-east signals)
+                      (member 'start-south signals)
+                      (member 'start-west signals) (eq nil (car signals)))
+                 'center)
+                ((and (member 'start-north signals)
+                      (member 'start-east signals)
+                      (member 'start-south signals)
+                      (member 'start-west signals) (eq 'center (car signals)))
+                 nil)
+                ((and (eq 'start-north (car signals)) (member 'center signals))
+                 'stop-north)
+                ((and (eq 'start-east (car signals)) (member 'center signals))
+                 'stop-east)
+                ((and (eq 'start-south (car signals)) (member 'center signals))
+                 'stop-south)
+                ((and (eq 'start-west (car signals)) (member 'center signals))
+                 'stop-west)
+                ((member (car signals)
+                         '(stop-north stop-east stop-south stop-west))
+                 nil)
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (member (elt signals (position '(1 0) *moore* :test #'equal))
+                          '(stop-west stop-north)))
+                 (elt signals (position '(1 0) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (member
+                   (elt signals (position '(0 -1) *moore* :test #'equal))
+                   '(stop-north stop-east)))
+                 (elt signals (position '(0 -1) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (member
+                   (elt signals (position '(-1 0) *moore* :test #'equal))
+                   '(stop-east stop-south)))
+                 (elt signals (position '(-1 0) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (member (elt signals (position '(0 1) *moore* :test #'equal))
+                          '(stop-south stop-west)))
+                 (elt signals (position '(0 1) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (eq (elt signals (position '(1 1) *moore* :test #'equal))
+                      'stop-west))
+                 (elt signals (position '(1 1) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (eq (elt signals (position '(1 -1) *moore* :test #'equal))
+                      'stop-north))
+                 (elt signals (position '(1 -1) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (eq (elt signals (position '(-1 -1) *moore* :test #'equal))
+                      'stop-east))
+                 (elt signals (position '(-1 -1) *moore* :test #'equal)))
+                ((and
+                  (member (car signals)
+                          '(start-north start-east start-south start-west))
+                  (eq (elt signals (position '(-1 1) *moore* :test #'equal))
+                      'stop-south))
+                 (elt signals (position '(-1 1) *moore* :test #'equal)))
+                ((and (eq 'start-west (car signals))
+                      (eq 'start-east
+                          (elt signals
+                               (position '(1 1) *moore* :test #'equal))))
+                 'stop-west)
+                ((and (eq 'start-north (car signals))
+                      (eq 'start-south
+                          (elt signals
+                               (position '(1 -1) *moore* :test #'equal))))
+                 'stop-north)
+                ((and (eq 'start-east (car signals))
+                      (eq 'start-west
+                          (elt signals
+                               (position '(-1 -1) *moore* :test #'equal))))
+                 'stop-east)
+                ((and (eq 'start-south (car signals))
+                      (eq 'start-north
+                          (elt signals
+                               (position '(-1 1) *moore* :test #'equal))))
+                 'stop-south)
+                ((and border-north border-east) 'start-north)
+                ((and border-east border-south) 'start-east)
+                ((and border-south border-west) 'start-south)
+                ((and border-west border-north) 'start-west)
+                (border-north 'start-north) (border-east 'start-east)
+                (border-south 'start-south) (border-west 'start-west)
+                ((and (eq nil (car signals)) propagate-north propagate-east)
+                 'start-north)
+                ((and (eq nil (car signals)) propagate-east propagate-south)
+                 'start-east)
+                ((and (eq nil (car signals)) propagate-south propagate-west)
+                 'start-south)
+                ((and (eq nil (car signals)) propagate-west propagate-north)
+                 'start-west)
+                ((and (eq nil (car signals)) propagate-north) 'start-north)
+                ((and (eq nil (car signals)) propagate-east) 'start-east)
+                ((and (eq nil (car signals)) propagate-south) 'start-south)
+                ((and (eq nil (car signals)) propagate-west) 'start-west)
+                (t (car signals))))
+         (next-data
+          (cond
+           ((eq 'start-north next-signal)
+            (elt data (position '(0 -1) *moore* :test #'equal)))
+           ((eq 'start-east next-signal)
+            (elt data (position '(-1 0) *moore* :test #'equal)))
+           ((eq 'start-south next-signal)
+            (elt data (position '(0 1) *moore* :test #'equal)))
+           ((eq 'start-west next-signal)
+            (elt data (position '(1 0) *moore* :test #'equal)))
+           (t (car data)))))
+    (cell-registers-to-state *states-rotation* (list next-data next-signal))))
+
+(defun next-state-torus (rule current)
+  (let ((rows (length current)) (columns (length (car current))))
+    (mapcar
+     #'(lambda (row)
+         (mapcar
+          #'(lambda (column)
+              (funcall rule
+                       (mapcar
+                        #'(lambda (coordinates)
+                            (destructuring-bind
+                                (row column)
+                                coordinates
+                              (elt (elt current row) column)))
+                        (mapcar
+                         #'(lambda (offsets)
+                             (mapcar #'mod
+                                     (mapcar #'+ (list rows columns)
+                                             (list row column) offsets)
+                                     (list rows columns)))
+                         *moore*))))
+          (range 0 (1- columns))))
+     (range 0 (1- rows)))))
+
+(defun after-n-steps-torus (n rule initial)
+  (if (eql 0 n)
+      initial
+      (after-n-steps-torus (1- n) rule (next-state-torus rule initial))))
+
+(defun delimited (delimiter raw)
+  (if (cdr raw)
+      (list* (car raw) delimiter (delimited delimiter (cdr raw)))
+      raw))
+
 (defun stream-write-table (output states rule)
   (format output "n_states:")
   (format output "~d" (write-to-string states))
@@ -255,34 +498,101 @@
 neighborhood:Moore
 symmetries:none
 ")
-  (apply #'mapc-cartesian
-         #'(lambda (neighbourhood)
-             (format output
-                     (apply #'concatenate 'string
-                            (nconc
-                             (mapcar #'write-to-string
-                                     (concatenate 'list neighbourhood
-                                                  (list
-                                                   (funcall rule
-                                                            neighbourhood))))
-                             (list "
-")))))
-         (make-list 9 :initial-element (range 0 (1- states)))))
+  (let ((format
+         (if (< states 10)
+             #'identity
+             #'(lambda (entries) (delimited "," entries)))))
+    (apply #'mapc-cartesian
+           #'(lambda (neighbourhood)
+               (let ((next (funcall rule neighbourhood)))
+                 (unless (eql next (car neighbourhood))
+                   (format output
+                           (apply #'concatenate 'string
+                                  (nconc
+                                   (funcall format
+                                            (mapcar #'write-to-string
+                                                    (concatenate 'list
+                                                                 neighbourhood
+                                                                 (list next))))
+                                   (list "
+")))))))
+           (make-list 9 :initial-element (range 0 (1- states))))))
 
 (defun stream-write-rule (output)
-  (format output "~d" "@RULE CompetitiveLife
+  (format output "~d" "@RULE Rotation
 
 @TABLE
 ")
-  (stream-write-table output 5 #'two-faction-rule-with-glider-generator)
-  (format output "~d" "
-@COLORS
-0 0 24 48
-1 0 128 255
-2 48 0 0
-3 255 0 0
-4 255 255 0
-"))
+  (stream-write-table output (length *states-rotation*) #'rotation-rule))
 
-(stream-write-rule *standard-output*)
+(defvar *rotation-initial-pattern-1*
+  '((0 0 1 0 0 0) (0 0 1 0 0 0) (1 1 1 1 1 1) (0 0 0 0 0 0) (0 0 0 0 0 0)
+    (0 0 0 0 0 0)))
+
+(defvar *rotation-initial-1*
+  (grid-registers-to-states *states-rotation*
+   (concatenate 'list
+                (make-list 7 :initial-element
+                           (make-list 20 :initial-element '(border nil)))
+                (mapcar
+                 #'(lambda (row)
+                     (concatenate 'list
+                                  (make-list 7 :initial-element '(border nil))
+                                  (mapcar
+                                   #'(lambda (value)
+                                       (list
+                                        (if (eql 0 value)
+                                            'off
+                                            'on)
+                                        nil))
+                                   row)
+                                  (concatenate 'list
+                                               (make-list 7 :initial-element
+                                                          '(border nil)))))
+                 *rotation-initial-pattern-1*)
+                (make-list 7 :initial-element
+                           (make-list 20 :initial-element '(border nil))))))
+
+(defvar *rotation-initial-pattern-2*
+  '((0 0 1 0 0) (0 0 1 0 0) (1 1 1 1 1) (0 0 0 0 0) (0 0 0 0 0)))
+
+(defvar *rotation-initial-2*
+  (grid-registers-to-states *states-rotation*
+   (concatenate 'list
+                (make-list 7 :initial-element
+                           (make-list 20 :initial-element '(border nil)))
+                (mapcar
+                 #'(lambda (row)
+                     (concatenate 'list
+                                  (make-list 7 :initial-element '(border nil))
+                                  (mapcar
+                                   #'(lambda (value)
+                                       (list
+                                        (if (eql 0 value)
+                                            'off
+                                            'on)
+                                        nil))
+                                   row)
+                                  (concatenate 'list
+                                               (make-list 8 :initial-element
+                                                          '(border nil)))))
+                 *rotation-initial-pattern-2*)
+                (make-list 8 :initial-element
+                           (make-list 20 :initial-element '(border nil))))))
+
+(subst 0 'border
+       (subst 0 'off
+              (subst 1 'on
+                     (grid-register 0
+                      (grid-states-to-registers *states-rotation*
+                       (after-n-steps-torus 6 #'rotation-rule
+                        *rotation-initial-1*))))))
+
+(subst 0 'border
+       (subst 0 'off
+              (subst 1 'on
+                     (grid-register 0
+                      (grid-states-to-registers *states-rotation*
+                       (after-n-steps-torus 5 #'rotation-rule
+                        *rotation-initial-2*))))))
 
